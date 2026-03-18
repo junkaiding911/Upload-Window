@@ -13,7 +13,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'meinPasswort123';
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'dc4gxm75u',
   api_key:    process.env.CLOUDINARY_API_KEY    || '872843359196177',
-  api_secret: process.env.CLOUDINARY_API_SECRET || 'ZJsQJYSuS5gIuGxCMWHYO6TjSb8',
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'ytBrNqM0AWCA4C3BkhT2Dc7jsJw',
 });
 
 // Multer: Dateien im Arbeitsspeicher puffern (bis 1 GB)
