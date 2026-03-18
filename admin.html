@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — Dateiverwaltung</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; min-height: 100vh; }
+
+    /* Login */
+    .login-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .login-card { background: #fff; border-radius: 16px; padding: 2.5rem; width: 100%; max-width: 380px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .login-card h1 { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+    .login-card p { font-size: 13px; color: #888; margin-bottom: 2rem; }
+    .login-card input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; outline: none; margin-bottom: 12px; }
+    .login-card input:focus { border-color: #178EDE; }
+    .login-card button { width: 100%; padding: 11px; background: #178EDE; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .login-card button:hover { opacity: 0.88; }
+    .login-error { color: #A32D2D; font-size: 13px; margin-top: 10px; display: none; }
+
+    /* Admin */
+    .admin-screen { display: none; }
+    .topbar { background: #fff; border-bottom: 1px solid #eee; padding: 0 2rem; height: 56px; display: flex; align-items: center; justify-content: space-between; }
+    .topbar-left { font-size: 14px; font-weight: 600; color: #1a1a1a; }
+    .topbar-right { display: flex; align-items: center; gap: 16px; }
+    .logout-btn { font-size: 13px; color: #888; background: none; border: none; cursor: pointer; }
+    .logout-btn:hover { color: #333; }
+    .badge { background: #EBF5FD; color: #178EDE; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 99px; }
+    .content { max-width: 800px; margin: 2rem auto; padding: 0 1.5rem; }
+    .section-title { font-size: 13px; font-weight: 600; color: #888; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 1rem; }
+
+    /* File table */
+    .file-table { background: #fff; border-radius: 12px; border: 1px solid #eee; overflow: hidden; }
+    .file-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f0f0f0; }
+    .file-row:last-child { border-bottom: none; }
+    .file-row:hover { background: #fafafa; }
+    .file-icon { width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .file-icon svg { width: 15px; height: 15px; }
+    .file-meta { flex: 1; min-width: 0; }
+    .file-meta .name { font-size: 13px; font-weight: 500; color: #1a1a1a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .file-meta .info { font-size: 12px; color: #aaa; margin-top: 2px; }
+    .dl-btn { padding: 6px 14px; background: #fff; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; color: #333; white-space: nowrap; text-decoration: none; display: inline-block; }
+    .dl-btn:hover { background: #f5f5f5; }
+    .empty { text-align: center; padding: 3rem; color: #aaa; font-size: 14px; }
+    .loading { text-align: center; padding: 2rem; color: #aaa; font-size: 13px; }
+    .refresh-btn { font-size: 13px; color: #178EDE; background: none; border: none; cursor: pointer; font-weight: 500; }
+    .refresh-btn:hover { opacity: 0.75; }
+  </style>
+</head>
+<body>
+
+<!-- Login -->
+<div class="login-screen" id="login-screen">
+  <div class="login-card">
+    <h1>Admin-Bereich</h1>
+    <p>Nur für dich — bitte Passwort eingeben</p>
+    <input type="password" id="pw-input" placeholder="Passwort" autocomplete="current-password">
+    <button onclick="doLogin()">Einloggen</button>
+    <p class="login-error" id="login-error">Falsches Passwort</p>
+  </div>
+</div>
+
+<!-- Admin -->
+<div class="admin-screen" id="admin-screen">
+  <div class="topbar">
+    <div class="topbar-left">Dateiverwaltung</div>
+    <div class="topbar-right">
+      <span class="badge" id="file-count">0 Dateien</span>
+      <button class="refresh-btn" onclick="loadFiles()">Aktualisieren</button>
+      <button class="logout-btn" onclick="logout()">Abmelden</button>
+    </div>
+  </div>
+  <div class="content">
+    <p class="section-title">Hochgeladene Dateien</p>
+    <div class="file-table" id="file-table">
+      <div class="loading">Wird geladen...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let adminPw = '';
+
+function getColor(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (ext === 'pdf') return { bg: '#FCEBEB', stroke: '#E24B4A' };
+  if (['doc','docx'].includes(ext)) return { bg: '#EBF5FD', stroke: '#178EDE' };
+  if (['xls','xlsx'].includes(ext)) return { bg: '#EAF3DE', stroke: '#0F6E56' };
+  if (['jpg','jpeg','png','gif','webp'].includes(ext)) return { bg: '#EEEDFE', stroke: '#7F77DD' };
+  return { bg: '#f0f0f0', stroke: '#888' };
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function formatDate(isoDate) {
+  const [y, m, d] = isoDate.split('-');
+  return `${d}.${m}.${y}`;
+}
+
+async function doLogin() {
+  const pw = document.getElementById('pw-input').value;
+  const res = await fetch('/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: pw })
+  });
+  if (res.ok) {
+    adminPw = pw;
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('admin-screen').style.display = 'block';
+    loadFiles();
+  } else {
+    document.getElementById('login-error').style.display = 'block';
+  }
+}
+
+document.getElementById('pw-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+async function loadFiles() {
+  const table = document.getElementById('file-table');
+  table.innerHTML = '<div class="loading">Wird geladen...</div>';
+
+  const res = await fetch('/admin/files', { headers: { 'x-admin-password': adminPw } });
+  if (!res.ok) { table.innerHTML = '<div class="empty">Fehler beim Laden</div>'; return; }
+
+  const files = await res.json();
+  document.getElementById('file-count').textContent = files.length + ' Datei' + (files.length !== 1 ? 'en' : '');
+
+  if (files.length === 0) {
+    table.innerHTML = '<div class="empty">Noch keine Dateien hochgeladen</div>';
+    return;
+  }
+
+  table.innerHTML = files.map(f => {
+    const c = getColor(f.name);
+    const dlUrl = `/admin/download/${f.date}/${encodeURIComponent(f.filename)}?pw=${encodeURIComponent(adminPw)}`;
+    return `
+      <div class="file-row">
+        <div class="file-icon" style="background:${c.bg}">
+          <svg viewBox="0 0 16 16" fill="none">
+            <path d="M4 2h6l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="${c.stroke}" stroke-width="1.2"/>
+            <path d="M10 2v4h4" stroke="${c.stroke}" stroke-width="1.2"/>
+          </svg>
+        </div>
+        <div class="file-meta">
+          <div class="name">${f.name}</div>
+          <div class="info">${formatDate(f.date)} · ${formatSize(f.size)}</div>
+        </div>
+        <a class="dl-btn" href="${dlUrl}" download="${f.name}">↓ Herunterladen</a>
+      </div>
+    `;
+  }).join('');
+}
+
+function logout() {
+  adminPw = '';
+  document.getElementById('admin-screen').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('pw-input').value = '';
+}
+</script>
+</body>
+</html>
