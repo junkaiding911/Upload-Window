@@ -1,84 +1,109 @@
-const express = require('express');
-const multer  = require('multer');
-const path    = require('path');
-const fs      = require('fs');
+const express    = require('express');
+const multer     = require('multer');
+const cloudinary = require('cloudinary').v2;
+const path       = require('path');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ⚙️ HIER DEIN ADMIN-PASSWORT ÄNDERN
+// ⚙️ Admin-Passwort
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'meinPasswort123';
 
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const today = new Date().toISOString().slice(0, 10);
-    const dir = path.join(UPLOAD_DIR, today);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    const timestamp = Date.now();
-    const safeName  = file.originalname.replace(/[^a-zA-Z0-9._\-äöüÄÖÜ ]/g, '_');
-    cb(null, `${timestamp}_${safeName}`);
-  }
+// Cloudinary Konfiguration (Werte als Railway-Variablen setzen)
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'dc4gxm75u',
+  api_key:    process.env.CLOUDINARY_API_KEY    || '872843359196177',
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'ZJsQJYSuS5gIuGxCMWHYO6TjSb8',
 });
 
-const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
+// Multer: Dateien im Arbeitsspeicher puffern (bis 1 GB)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1024 * 1024 * 1024 }
+});
 
 app.use(express.static(path.join(__dirname)));
 app.use(express.json());
 
 // Upload-Endpunkt (öffentlich)
-app.post('/upload', upload.array('files', 20), (req, res) => {
+app.post('/upload', upload.array('files', 20), async (req, res) => {
   if (!req.files || req.files.length === 0)
     return res.status(400).json({ error: 'Keine Dateien empfangen.' });
+
   const name = req.body.name || 'Unbekannt';
   const now  = new Date().toLocaleString('de-DE');
-  console.log(`[${now}] Upload von: ${name} — ${req.files.length} Datei(en)`);
-  res.json({ ok: true, files: req.files.length });
+
+  try {
+    const uploads = await Promise.all(req.files.map(file => {
+      return new Promise((resolve, reject) => {
+        const today    = new Date().toISOString().slice(0, 10);
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9._\-äöüÄÖÜ ]/g, '_');
+        const publicId = `artem-uploads/${today}/${Date.now()}_${safeName}`;
+
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            public_id:     publicId,
+            resource_type: 'raw',       // alle Dateitypen (PDF, DOCX, etc.)
+            use_filename:  true,
+            overwrite:     false,
+          },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve({ name: file.originalname, url: result.secure_url, public_id: result.public_id, size: file.size });
+          }
+        );
+        stream.end(file.buffer);
+      });
+    }));
+
+    console.log(`[${now}] Upload von: ${name} — ${uploads.length} Datei(en)`);
+    uploads.forEach(f => console.log(`  → ${f.name} (${(f.size / 1024 / 1024).toFixed(1)} MB)`));
+
+    res.json({ ok: true, files: uploads.length });
+  } catch (err) {
+    console.error('Upload-Fehler:', err);
+    res.status(500).json({ error: 'Upload fehlgeschlagen.' });
+  }
 });
 
-// Admin-Login prüfen
+// Admin-Login
 app.post('/admin/login', (req, res) => {
   if (req.body.password === ADMIN_PASSWORD) res.json({ ok: true });
   else res.status(401).json({ error: 'Falsches Passwort' });
 });
 
-// Dateiliste für Admin
-app.get('/admin/files', (req, res) => {
+// Dateiliste für Admin (von Cloudinary)
+app.get('/admin/files', async (req, res) => {
   const pw = req.headers['x-admin-password'];
   if (pw !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Nicht autorisiert' });
 
-  const result = [];
-  if (!fs.existsSync(UPLOAD_DIR)) return res.json([]);
-
-  const dates = fs.readdirSync(UPLOAD_DIR).sort().reverse();
-  for (const date of dates) {
-    const dir = path.join(UPLOAD_DIR, date);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    const files = fs.readdirSync(dir).map(fname => {
-      const stat = fs.statSync(path.join(dir, fname));
-      const originalName = fname.replace(/^\d+_/, '');
-      return { name: originalName, filename: fname, date, size: stat.size, mtime: stat.mtime };
+  try {
+    const result = await cloudinary.api.resources({
+      type:          'upload',
+      resource_type: 'raw',
+      prefix:        'artem-uploads/',
+      max_results:   200,
     });
-    result.push(...files);
+
+    const files = result.resources.map(r => {
+      const parts       = r.public_id.split('/');
+      const rawFilename = parts[parts.length - 1];
+      const name        = rawFilename.replace(/^\d+_/, '');
+      const date        = parts[1] || '';
+      return {
+        name,
+        public_id: r.public_id,
+        url:       r.secure_url,
+        date,
+        size:      r.bytes,
+      };
+    }).sort((a, b) => b.date.localeCompare(a.date));
+
+    res.json(files);
+  } catch (err) {
+    console.error('Cloudinary Fehler:', err);
+    res.status(500).json({ error: 'Fehler beim Laden der Dateien.' });
   }
-  res.json(result);
-});
-
-// Datei herunterladen
-app.get('/admin/download/:date/:filename', (req, res) => {
-  const pw = req.headers['x-admin-password'] || req.query.pw;
-  if (pw !== ADMIN_PASSWORD) return res.status(401).send('Nicht autorisiert');
-
-  const filePath = path.join(UPLOAD_DIR, req.params.date, req.params.filename);
-  if (!fs.existsSync(filePath)) return res.status(404).send('Datei nicht gefunden');
-
-  const originalName = req.params.filename.replace(/^\d+_/, '');
-  res.download(filePath, originalName);
 });
 
 app.listen(PORT, () => {

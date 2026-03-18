@@ -140,7 +140,7 @@ async function loadFiles() {
 
   table.innerHTML = files.map(f => {
     const c = getColor(f.name);
-    const dlUrl = `/admin/download/${f.date}/${encodeURIComponent(f.filename)}?pw=${encodeURIComponent(adminPw)}`;
+    const dlUrl = f.url || `/admin/download/${f.date}/${encodeURIComponent(f.filename)}?pw=${encodeURIComponent(adminPw)}`;
     return `
       <div class="file-row">
         <div class="file-icon" style="background:${c.bg}">
